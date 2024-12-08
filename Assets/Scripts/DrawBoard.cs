@@ -15,11 +15,18 @@ public class DrawBoard : MonoBehaviour
     public AudioClip clearSound;
     public AudioClip shiftSound;
     public AudioClip refillSound;
+    public AudioClip invalidSound;
     private AudioSource audioSource;
 
     // Tile dragging properties.
     private Vector3Int selectedCell = Vector3Int.zero;
     private bool isDragging = false;
+    private Vector3 originalScale = Vector3.one;
+
+    // Temporary properties.
+    private Vector3Int previewCell = Vector3Int.zero;
+    private TileBase previewTile;
+    bool hasSwapped = false;
 
     private void Start()
     {
@@ -49,7 +56,6 @@ public class DrawBoard : MonoBehaviour
     private void Update()
     {
         // Handle input with mouse clicking and dragging.
-
         if (Input.GetMouseButtonDown(0))
         {
             Vector3Int cell = GetMouseCellPosition();
@@ -59,21 +65,79 @@ public class DrawBoard : MonoBehaviour
             {
                 selectedCell = cell;
                 isDragging = true;
+
+                // Enlarge the selected tile.
+                originalScale = gameBoard.GetTransformMatrix(cell).lossyScale;
+                gameBoard.SetTransformMatrix(cell, Matrix4x4.TRS(Vector3.zero, Quaternion.identity, originalScale * 1.2f));
+            }
+        }
+
+        if (Input.GetMouseButton(0) && isDragging)
+        {
+            Vector3Int targetCell = GetMouseCellPosition();
+
+            if (IsWithinBounds(targetCell) && targetCell != selectedCell && IsAdjacent(selectedCell, targetCell))
+            {
+                if (previewCell != Vector3Int.zero)
+                {
+                    // Reset previous preview tile.
+                    gameBoard.SetTransformMatrix(previewCell, Matrix4x4.TRS(Vector3.zero, Quaternion.identity, originalScale));
+                }
+
+                previewCell = targetCell;
+                previewTile = gameBoard.GetTile(targetCell);
+
+                // Enlarge the preview tile.
+                gameBoard.SetTransformMatrix(previewCell, Matrix4x4.TRS(Vector3.zero, Quaternion.identity, originalScale * 1.2f));
             }
         }
 
         if (Input.GetMouseButtonUp(0) && isDragging)
         {
-            // Get the target cell and swap tiles if it is adjacent.
             Vector3Int targetCell = GetMouseCellPosition();
+
             if (IsWithinBounds(targetCell) && IsAdjacent(selectedCell, targetCell))
             {
-                // Swap the two tiles.
-                SwapTiles(selectedCell, targetCell, true); 
-                StartCoroutine(ClearMatchesAndShift());
+                // Swap tiles temporarily to check for matches
+                SwapTiles(selectedCell, targetCell, false);
+
+                HashSet<Vector3Int> matches = FindMatches();
+                if (matches.Count > 0)
+                {
+                    // Valid swap, handle player action
+                    bool isPlayerAction = true;
+                    SwapTiles(selectedCell, targetCell, isPlayerAction);
+                    StartCoroutine(ClearMatchesAndShift());
+                }
+                else
+                {
+                    // Invalid swap, revert the swap
+                    SwapTiles(selectedCell, targetCell, false);
+                    audioSource.PlayOneShot(invalidSound);
+                    StartCoroutine(ShakeBoard());
+                }
             }
-            // Stop dragging after dragging is done.
+
+            // Reset dragging state
+            ResetTileToOriginalState();
+            previewCell = Vector3Int.zero;
             isDragging = false;
+            hasSwapped = false;
+        }
+    }
+
+    void ResetTileToOriginalState()
+    {
+        // Reset the selected tile to its original state
+        if (selectedCell != Vector3Int.zero)
+        {
+            gameBoard.SetTransformMatrix(selectedCell, Matrix4x4.TRS(Vector3.zero, Quaternion.identity, originalScale));
+        }
+
+        // Reset the preview tile to its original scale as well
+        if (previewCell != Vector3Int.zero)
+        {
+            gameBoard.SetTransformMatrix(previewCell, Matrix4x4.TRS(Vector3.zero, Quaternion.identity, originalScale));
         }
     }
 
@@ -85,23 +149,38 @@ public class DrawBoard : MonoBehaviour
         gameBoard.SetTile(cell1, tile2);
         gameBoard.SetTile(cell2, tile1);
 
-        // Find matches and add to the matched cells hashset.
-        HashSet<Vector3Int> matchedCells = FindMatches();
-
-        if (matchedCells.Count == 0)
+        if (isPlayerAction)
         {
-            // No match found, swap back.
-            gameBoard.SetTile(cell1, tile1);
-            gameBoard.SetTile(cell2, tile2);
+            HashSet<Vector3Int> matchedCells = FindMatches();
+
+            if (matchedCells.Count > 0)
+            {
+                // If there's a match, play the clear sound.
+                audioSource.PlayOneShot(clearSound);
+
+                foreach (var cell in matchedCells)
+                {
+                    gameBoard.SetTile(cell, null);
+                }
+                ScoreManager.instance.AddScore(matchedCells.Count);
+                StartCoroutine(ClearMatchesAndShift());
+            }
+            else
+            {
+                // Revert the swap if no match is found
+                gameBoard.SetTile(cell1, tile1);
+                gameBoard.SetTile(cell2, tile2);
+            }
         }
     }
+
 
     IEnumerator ClearMatchesAndShift()
     {
         while (true)
         {
             // Allow clearing to be visible.
-            yield return new WaitForSeconds(0.5f); 
+            yield return new WaitForSeconds(0.2f);
 
             // Check for matches and clear them.
             HashSet<Vector3Int> matchedCells = FindMatches();
@@ -112,12 +191,13 @@ public class DrawBoard : MonoBehaviour
 
                 foreach (var cell in matchedCells)
                 {
-                    // Clear the matched tiles.
-                    gameBoard.SetTile(cell, null); 
+                    // Add the score and clear the matched tiles.
+                    ScoreManager.instance.AddScore(matchedCells.Count);
+                    gameBoard.SetTile(cell, null);
                 }
 
                 // Extra delay for visual feedback.
-                yield return new WaitForSeconds(0.5f); 
+                yield return new WaitForSeconds(0.5f);
 
                 // Shift the cells down and play the shift sound.
                 audioSource.PlayOneShot(shiftSound);
@@ -127,7 +207,7 @@ public class DrawBoard : MonoBehaviour
             else
             {
                 // Exits the loop if no matches are found.
-                break; 
+                break;
             }
         }
     }
@@ -221,6 +301,28 @@ public class DrawBoard : MonoBehaviour
                 }
             }
         }
+    }
+
+    IEnumerator ShakeBoard()
+    {
+        Vector3 originalPosition = gameBoard.transform.position;
+        float shakeDuration = 0.5f;
+        float shakeMagnitude = 0.1f;
+        float elapsed = 0.0f;
+
+        while (elapsed < shakeDuration)
+        {
+            float x = Random.Range(-1f, 1f) * shakeMagnitude;
+            float y = Random.Range(-1f, 1f) * shakeMagnitude;
+
+            gameBoard.transform.position = new Vector3(originalPosition.x + x, originalPosition.y + y, originalPosition.z);
+
+            elapsed += Time.deltaTime;
+
+            yield return null;
+        }
+
+        gameBoard.transform.position = originalPosition;
     }
 
     Vector3Int GetMouseCellPosition()
