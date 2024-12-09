@@ -8,7 +8,7 @@ public class ScoreManager : MonoBehaviour
     // Create an instance of score manager.
     public static ScoreManager instance;
 
-    int score;
+    public int score;
     public TextMeshProUGUI scoreText;
 
     private void Awake()
@@ -35,7 +35,7 @@ public class ScoreManager : MonoBehaviour
         UpdateScoreText();
     }
 
-    void UpdateScoreText()
+    public void UpdateScoreText()
     {
         scoreText.text = "Score: " + score;   
     }
