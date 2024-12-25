@@ -4,7 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
-public class GameManager : MonoBehaviour
+public class GameManager : MonoBehaviour, IDataPersistence
 {
     public static GameManager instance;
 
@@ -19,6 +19,9 @@ public class GameManager : MonoBehaviour
 
     public GameObject gameOverPanel;
     public TextMeshProUGUI highScoreText;
+
+    public int highscore;
+    public int score;
 
     public enum GameState
     {
@@ -37,13 +40,23 @@ public class GameManager : MonoBehaviour
         {
             Destroy(gameObject);
         }
+        
     }
 
     private void Start()
     {
+        LoadData(DataPersistenceManager.instance.gameData);
         ChangeGameState(GameState.Menu);
     }
 
+    public void LoadData(GameData data)
+    {
+        this.highscore = data.highscore;
+    }
+    public void SaveData(ref GameData data)
+    {
+        data.highscore = highscore;
+    }
     private void Update()
     {
         if (currentState == GameState.Play)
@@ -76,24 +89,26 @@ public class GameManager : MonoBehaviour
                 gameOverPanel.SetActive(false);
                 break;
             case GameState.Play:
-                menuPanel.SetActive(false);
                 highScoreText.transform.SetParent(playPanel.transform);
+                ScoreManager.instance.scoreText.transform.SetParent(playPanel.transform);
                 gameTimerText.transform.SetParent(playPanel.transform);
+                menuPanel.SetActive(false);
                 gameBoard.SetActive(true);
                 musicPlayer.Play();
                 playPanel.SetActive(true);
                 gameOverPanel.SetActive(false);
                 gameTimer = 90f; // Reset the timer when the game starts
+                highScoreText.text = "High Score: " + highscore;
                 break;
             case GameState.GameOver:
                 musicPlayer.Stop();
                 highScoreText.transform.SetParent(gameOverPanel.transform);
                 gameTimerText.transform.SetParent(gameOverPanel.transform);
+                ScoreManager.instance.scoreText.transform.SetParent(gameOverPanel.transform);
                 menuPanel.SetActive(false);
                 gameBoard.SetActive(false);
                 playPanel.SetActive(false);
                 gameOverPanel.SetActive(true);
-                DisplayHighScore();
                 break;
         }
     }
@@ -110,23 +125,25 @@ public class GameManager : MonoBehaviour
 
     private void EndGame()
     {
-        int currentScore = ScoreManager.instance.score;
-        int highScore = PlayerPrefs.GetInt("HighScore", 0);
+        score = ScoreManager.instance.score;
 
-        if (currentScore > highScore)
+        if (score > highscore)
         {
-            PlayerPrefs.SetInt("HighScore", currentScore);
+            highscore = score;
+            highScoreText.text = "New High Score! " + highscore;
+        }
+        else
+        {
+            highScoreText.text = "Score: " + highscore;
         }
 
-        ScoreManager.instance.score = 0;
-        ScoreManager.instance.UpdateScoreText();
+        ScoreManager.instance.scoreText.text = "Your score: " + score;
         gameTimer = 90f;
         ChangeGameState(GameState.GameOver);
     }
 
     private void DisplayHighScore()
     {
-        int highScore = PlayerPrefs.GetInt("HighScore", 0);
-        highScoreText.text = "High Score: " + highScore;
+        highScoreText.text += "\nHigh Score: " + highscore;
     }
 }
